@@ -15,13 +15,24 @@ import Browserbase from "@browserbasehq/sdk";
 import { Stagehand } from "@browserbasehq/stagehand";
 import { main } from "./main";
 
-export async function runStagehand(sessionId?: string) {
+// Define interface for WikiRace game parameters
+interface WikiRaceParams {
+  startPage: string;
+  targetPage: string;
+}
+
+export async function runStagehand(sessionId?: string, gameParams?: WikiRaceParams) {
   const stagehand = new Stagehand({
     ...StagehandConfig,
     browserbaseSessionID: sessionId,
   });
   await stagehand.init();
-  await main({ page: stagehand.page, context: stagehand.context, stagehand });
+  await main({ 
+    page: stagehand.page, 
+    context: stagehand.context, 
+    stagehand,
+    gameParams 
+  });
   await stagehand.close();
 }
 
