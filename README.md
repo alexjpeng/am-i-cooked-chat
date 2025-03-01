@@ -1,6 +1,6 @@
-# WikiRace AI 🏁
+# am I cooked chat? 🏁
 
-A fun, Gen-Z styled Wikipedia racing game where you compete against an AI powered by Stagehand and Browserbase.
+cooked or cracked? a Wikipedia racing game where you compete against an AI powered by Stagehand and Browserbase.
 
 ## What is WikiRace?
 
@@ -12,7 +12,6 @@ WikiRace is a game where players try to navigate from one Wikipedia page to anot
 - 👀 Watch the AI navigate through Wikipedia using Browserbase
 - 🤣 Get roasted (or praised) based on your performance
 - 💯 Find out if you're "cracked" or "cooked" at Wikipedia navigation
-- 🎮 Simple, vibrant, Gen-Z inspired interface
 
 ## How to Play
 
