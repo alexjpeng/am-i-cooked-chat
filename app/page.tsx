@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import Image from "next/image";
 import { getConfig, runStagehand, startBBSSession } from "@/app/api/stagehand/run";
 import { ConstructorParams } from "@browserbasehq/stagehand";
 import DebuggerIframe from "@/components/stagehand/debuggerIframe";
@@ -61,18 +60,10 @@ export default function Home() {
   const [config, setConfig] = useState<ConstructorParams | null>(null);
   const [running, setRunning] = useState(false);
   const [debugUrl, setDebugUrl] = useState<string | undefined>(undefined);
-  const [sessionId, setSessionId] = useState<string | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
 
-  // Random Wikipedia page pairs
-  const wikiPairs = [
-    { start: "Pizza", target: "Albert_Einstein" },
-    { start: "Taylor_Swift", target: "Quantum_mechanics" },
-    { start: "Basketball", target: "Ancient_Rome" },
-    { start: "Coffee", target: "Moon_landing" },
-    { start: "TikTok", target: "Dinosaur" }
-  ];
+  
 
   const fetchConfig = useCallback(async () => {
     const config = await getConfig();
@@ -91,8 +82,38 @@ export default function Home() {
     setWarning(warningToShow.join("\n"));
   }, []);
 
+  const endGame = useCallback((reason = 'completed') => {
+    setRunning(false);
+    
+    if (reason === 'error') return;
+    
+    setGameState(prev => ({
+      ...prev,
+      status: 'completed',
+      endTime: new Date(),
+      result: {
+        winner: Math.random() > 0.5 ? 'player' : 'ai', // For demo purposes
+        playerClicks: prev.playerPath.length,
+        aiClicks: prev.aiPath.length,
+        playerTime: prev.startTime ? (new Date().getTime() - prev.startTime.getTime()) / 1000 : 0,
+        aiTime: prev.startTime ? (new Date().getTime() - prev.startTime.getTime() - 2000) / 1000 : 0, // AI is slightly faster for demo
+        commentary: generateCommentary(prev.playerPath.length),
+        rating: prev.playerPath.length < 8 ? 'cracked' : prev.playerPath.length > 12 ? 'cooked' : 'mid'
+      }
+    }));
+  }, []);
+
   const startGame = useCallback(async (start = '', target = '') => {
     if (!config) return;
+
+    // Random Wikipedia page pairs
+  const wikiPairs = [
+    { start: "Pizza", target: "Albert_Einstein" },
+    { start: "Taylor_Swift", target: "Quantum_mechanics" },
+    { start: "Basketball", target: "Ancient_Rome" },
+    { start: "Coffee", target: "Moon_landing" },
+    { start: "TikTok", target: "Dinosaur" }
+  ];
 
     // If no custom pages provided, pick a random pair
     if (!start || !target) {
@@ -118,7 +139,6 @@ export default function Home() {
       if (config.env === "BROWSERBASE") {
         const { sessionId, debugUrl } = await startBBSSession();
         setDebugUrl(debugUrl);
-        setSessionId(sessionId);
         
         // Pass start and target pages to Stagehand
         await runStagehand(sessionId, {
@@ -135,44 +155,16 @@ export default function Home() {
       setError((error as Error).message);
       endGame('error');
     }
-  }, [config, wikiPairs]);
-
-  const endGame = (reason = 'completed') => {
-    setRunning(false);
-    
-    if (reason === 'error') return;
-    
-    setGameState(prev => ({
-      ...prev,
-      status: 'completed',
-      endTime: new Date(),
-      result: {
-        winner: Math.random() > 0.5 ? 'player' : 'ai', // For demo purposes
-        playerClicks: prev.playerPath.length,
-        aiClicks: prev.aiPath.length,
-        playerTime: prev.startTime ? (new Date().getTime() - prev.startTime.getTime()) / 1000 : 0,
-        aiTime: prev.startTime ? (new Date().getTime() - prev.startTime.getTime() - 2000) / 1000 : 0, // AI is slightly faster for demo
-        commentary: generateCommentary(prev.playerPath.length),
-        rating: prev.playerPath.length < 8 ? 'cracked' : prev.playerPath.length > 12 ? 'cooked' : 'mid'
-      }
-    }));
-  };
+  }, [config, endGame]);
 
   const generateCommentary = (clicks: number): string => {
     const roasts = [
-      "Bestie, you're navigating Wikipedia like my grandma trying to find the logout button on Facebook 💀",
-      "The way you're clicking around is giving major 'first time on the internet' energy ✋😭",
-      "Not you taking the scenic route when there was a shortcut right there 🤦‍♀️",
-      "Your wiki game is so mid, even Wikipedia's servers are yawning rn 🥱",
-      "Living for how you thought Ancient Egypt and Quantum Physics were connected somehow ☠️"
+      "you got cooked by gpt-4o-mini in 3 clicks. ngmi",
+      "maybe you didn't get enough pretraining in the womb. cooked.",
     ];
     
     const praise = [
-      "OK GO OFF! Your wiki navigation skills are absolutely cracked 🔥",
-      "The way you found that connection? Big brain energy fr fr 🧠✨",
-      "You ate that challenge and left no crumbs! Wikipedia navigation queen 👑",
-      "Nah because how did you know that shortcut existed?? We stan an intellectual 🤓",
-      "Your wiki speed run just cleared my skin and watered my crops 💯"
+      "absolutely cracked. you might be safe from agi (for now)",
     ];
     
     return clicks < 8 ? praise[Math.floor(Math.random() * praise.length)] : 
@@ -250,13 +242,13 @@ export default function Home() {
             <div className="space-y-4">
               {showCustom ? (
                 <>
-                  <div className="space-y-4">
+                  <div className="space-y-4 z-10">
                     <WikiAutocomplete
                       value={customStart}
                       onChange={setCustomStart}
-                      onSelect={(page, title) => {
-                        setCustomStartPage(page);
-                        setCustomStart(title);
+                      onSelect={(pageName) => {
+                        setCustomStartPage(pageName);
+                        setCustomStart(pageName.replace(/_/g, ' '));
                       }}
                       placeholder="Type to search for a start page..."
                       label="Start Page"
@@ -265,9 +257,9 @@ export default function Home() {
                     <WikiAutocomplete
                       value={customTarget}
                       onChange={setCustomTarget}
-                      onSelect={(page, title) => {
-                        setCustomTargetPage(page);
-                        setCustomTarget(title);
+                      onSelect={(pageName) => {
+                        setCustomTargetPage(pageName);
+                        setCustomTarget(pageName.replace(/_/g, ' '));
                       }}
                       placeholder="Type to search for a target page..."
                       label="Target Page"
@@ -379,10 +371,10 @@ export default function Home() {
             
             <div className="bg-black/30 p-4 rounded-lg mb-6">
               <div className="text-sm mb-2 font-medium">
-                {gameState.result.rating === 'cracked' ? '✨ YOU\'RE CRACKED' : 
+                {gameState.result.rating === 'cracked' ? '✨ YOU&apos;RE CRACKED' : 
                  gameState.result.rating === 'cooked' ? '💀 YOU GOT COOKED' : '😐 MID PERFORMANCE'}
               </div>
-              <div className="text-xl italic">"{gameState.result.commentary}"</div>
+              <div className="text-xl italic">{gameState.result.commentary}</div>
             </div>
             
             {/* Stagehand CTAs */}
@@ -437,7 +429,7 @@ export default function Home() {
         )}
       </main>
       
-      <footer className="p-4 text-center text-sm opacity-70">
+      <footer className="p-4 text-center text-sm opacity-7 z-5">
         <div className="flex flex-col items-center gap-3">
           <p>Built with <a href="https://stagehand.dev" target="_blank" rel="noopener noreferrer" className="underline">Stagehand</a> & <a href="https://browserbase.com" target="_blank" rel="noopener noreferrer" className="underline">Browserbase</a> | A fun demo of AI-powered web automation</p>
           

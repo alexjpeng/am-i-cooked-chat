@@ -6,10 +6,11 @@
  * using only hyperlinks, competing against the human player.
  */
 
-import { Page, BrowserContext, Stagehand } from "@browserbasehq/stagehand";
-import { z } from "zod";
+import { Page, Stagehand } from "@browserbasehq/stagehand";
+// import { z } from "zod";
 import chalk from "chalk";
 import dotenv from "dotenv";
+import OpenAI from "openai";
 
 dotenv.config();
 
@@ -21,16 +22,20 @@ interface WikiRaceParams {
 
 const chalkYellow = (msg: string) => chalk.hex('#FEC83C')(msg);
 const chalkPink = (msg: string) => chalk.hex('#FF69B4')(msg);
+const chalkGreen = (msg: string) => chalk.hex('#4CAF50')(msg);
+const chalkRed = (msg: string) => chalk.hex('#F44336')(msg);
+
+// Initialize OpenAI
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
 export async function main({
   page,
-  context,
-  stagehand,
   gameParams,
 }: {
   page: Page; // Playwright Page with act, extract, and observe methods
-  context: BrowserContext; // Playwright BrowserContext
-  stagehand: Stagehand; // Stagehand instance
+  stagehand?: Stagehand; // Optional Stagehand instance
   gameParams?: WikiRaceParams; // Game parameters
 }) {
   // Default game parameters if none provided
@@ -55,102 +60,73 @@ export async function main({
 
   // Track the path taken
   const path = [startPage];
-  let currentPage = startPage;
   let targetReached = false;
   let maxAttempts = 15; // Limit the number of attempts to prevent infinite loops
   
   // Main navigation loop
   while (!targetReached && maxAttempts > 0) {
     try {
-      // Extract all links from the current page
-      const extractResult = await page.extract({
-        instruction: "extract all links on this Wikipedia page, including their text and href attributes",
-        schema: z.object({
-          links: z.array(z.object({
-            text: z.string(),
-            href: z.string(),
-          })),
-        }),
-        useTextExtract: true,
-      });
+      // Get the current page title for logging and decision making
+      const currentPageTitle = await page.title();
+      const currentUrl = page.url();
+      console.log(`\n${chalkYellow('Currently on:')} ${currentPageTitle}`);
       
-      console.log(`Found ${extractResult.links.length} links on the current page`);
-      
-      // Filter links to only include Wikipedia article links
-      const wikiLinks = extractResult.links.filter(link => {
-        return link.href.includes('/wiki/') && 
-               !link.href.includes(':') && 
-               !link.href.includes('File:') &&
-               !link.href.includes('Special:') &&
-               !link.href.includes('Wikipedia:') &&
-               !link.href.includes('Help:') &&
-               !link.href.includes('Template:') &&
-               !link.href.includes('Category:') &&
-               !link.href.includes('Portal:') &&
-               !link.href.includes('Talk:');
-      });
-      
-      // Check if the target page is directly linked
-      const targetLink = wikiLinks.find(link => 
-        link.href.toLowerCase().includes(targetPage.toLowerCase()) || 
-        link.text.toLowerCase().includes(targetPage.replace(/_/g, ' ').toLowerCase())
-      );
-      
-      if (targetLink) {
-        // Target found! Click it
-        console.log(`🎯 Found direct link to target: ${targetLink.text}`);
-        
-        await page.act({
-          action: `click the link to ${targetLink.text}`,
-        });
-        
-        path.push(targetPage);
+      // Check if we've reached the target
+      if (
+        currentPageTitle.toLowerCase().includes(targetPage.toLowerCase().replace(/_/g, ' ')) || 
+        currentUrl.toLowerCase().includes(targetPage.toLowerCase())
+      ) {
+        console.log(`${chalkGreen('🏆 Target reached:')} ${currentPageTitle}`);
         targetReached = true;
         break;
       }
       
-      // Strategic link selection - try to find a link that might lead to the target
-      // This is where the AI "intelligence" comes in
-      const nextLink = await findBestLink(page, wikiLinks, targetPage);
+      // 1. Use plain Playwright to get all links on the page
+      console.log('Finding all valid Wikipedia links on this page...');
+      const links = await getWikipediaLinks(page);
+      console.log(`Found ${links.length} valid Wikipedia links on the current page`);
       
-      if (nextLink) {
-        console.log(`Choosing link: ${nextLink.text}`);
+      if (links.length === 0) {
+        console.log(chalkRed('No valid links found on this page, going back...'));
+        await page.goBack();
+        path.pop();
+        maxAttempts--;
+        continue;
+      }
+      
+      // 2. Use OpenAI to decide which link to click
+      console.log(`Asking OpenAI to decide which link best leads to "${targetPage.replace(/_/g, ' ')}"...`);
+      const bestLink = await decideBestLink(links, targetPage, currentPageTitle);
+      
+      if (bestLink) {
+        console.log(`${chalkGreen('AI decided to click:')} ${bestLink.text}`);
         
-        // Click the chosen link using act
+        // 3. Use Stagehand act() to click the chosen link
         await page.act({
-          action: `click the link to ${nextLink.text}`,
+          action: `click the link to "${bestLink.text}"`,
         });
         
         // Wait for page to load
         await page.waitForLoadState('networkidle');
         
-        // Get the new page title
+        // Get the new page title and update path
         const newPageTitle = await page.title();
         const simplifiedTitle = newPageTitle.replace(' - Wikipedia', '');
-        
         path.push(simplifiedTitle);
-        currentPage = simplifiedTitle;
         
-        // Check if we've reached the target
-        if (
-          newPageTitle.toLowerCase().includes(targetPage.toLowerCase().replace(/_/g, ' ')) || 
-          page.url().toLowerCase().includes(targetPage.toLowerCase())
-        ) {
-          console.log(`🏆 Target reached: ${newPageTitle}`);
-          targetReached = true;
-          break;
-        }
+        console.log(`${chalkYellow('Path so far:')} ${path.join(' → ')}`);
       } else {
-        // No good link found, go back and try a different path
-        console.log('No promising links found, going back...');
+        console.log(chalkRed('No suitable link found, going back...'));
         await page.goBack();
         path.pop(); // Remove the current page from path
       }
       
     } catch (error) {
-      console.error('Error during navigation:', error);
-      // Try to recover by using a more general act command
+      console.error(chalkRed('Error during navigation:'), error);
+      
+      // Try to recover by using a general act command
       try {
+        console.log('Attempting recovery with general Stagehand act...');
         await page.act({
           action: `find and click a link that might lead to ${targetPage.replace(/_/g, ' ')}`,
         });
@@ -161,11 +137,17 @@ export async function main({
         // Get the new page title
         const newPageTitle = await page.title();
         const simplifiedTitle = newPageTitle.replace(' - Wikipedia', '');
-        
         path.push(simplifiedTitle);
-        currentPage = simplifiedTitle;
       } catch (recoveryError) {
-        console.error('Recovery failed:', recoveryError);
+        console.error(chalkRed('Recovery failed:'), recoveryError);
+        // Go back as a last resort
+        try {
+          await page.goBack();
+          path.pop();
+        } catch {
+          // If even going back fails, just continue to the next iteration
+          console.error('Unable to go back, continuing...');
+        }
       }
     }
     
@@ -175,93 +157,151 @@ export async function main({
   // Report results
   if (targetReached) {
     console.log(`
-      🎉 AI successfully navigated from ${startPage} to ${targetPage}!
-      Path taken: ${path.join(' → ')}
-      Number of clicks: ${path.length - 1}
+      ${chalkGreen('🎉 SUCCESS!')} AI successfully navigated from ${startPage} to ${targetPage}!
+      ${chalkYellow('Path taken:')} ${path.join(' → ')}
+      ${chalkYellow('Number of clicks:')} ${path.length - 1}
     `);
   } else {
     console.log(`
-      😢 AI failed to reach ${targetPage} within the attempt limit.
-      Path so far: ${path.join(' → ')}
-      Number of clicks: ${path.length - 1}
+      ${chalkRed('😢 FAILED!')} AI couldn't reach ${targetPage} within the attempt limit.
+      ${chalkYellow('Path so far:')} ${path.join(' → ')}
+      ${chalkYellow('Number of clicks:')} ${path.length - 1}
     `);
   }
 }
 
 /**
- * Find the best link to follow based on relevance to the target
+ * Get all valid Wikipedia article links from the current page
  */
-async function findBestLink(page: Page, links: any[], targetPage: string) {
-  // Use Stagehand's observe to get AI assistance in choosing the best link
+async function getWikipediaLinks(page: Page): Promise<Array<{ text: string; href: string }>> {
+  return await page.evaluate(() => {
+    const linkElements = Array.from(document.querySelectorAll('a[href^="/wiki/"]'));
+    return linkElements
+      .map(el => ({
+        text: el.textContent?.trim() || "",
+        href: el.getAttribute('href') || "",
+      }))
+      // Filter out non-article links and links with very short text
+      .filter(link => 
+        link.href.includes('/wiki/') && 
+        !link.href.includes(':') && 
+        !link.href.includes('File:') &&
+        !link.href.includes('Special:') &&
+        !link.href.includes('Wikipedia:') &&
+        !link.href.includes('Help:') &&
+        !link.href.includes('Template:') &&
+        !link.href.includes('Category:') &&
+        !link.href.includes('Portal:') &&
+        !link.href.includes('Talk:') &&
+        link.text.length > 1 && // Skip very short link text
+        !link.text.match(/^\[\d+\]$/) // Skip citation links like [1], [2], etc.
+      );
+  });
+}
+
+/**
+ * Use OpenAI to decide which link is most likely to lead closer to the target page
+ */
+async function decideBestLink(
+  links: { text: string; href: string }[], 
+  targetPage: string,
+  currentPageTitle: string
+): Promise<{ text: string; href: string } | null> {
+  if (links.length === 0) return null;
+  
+  // Prepare a sample of links for the AI to consider (to avoid token limits)
+  const linkSample = links.length > 75 ? links.slice(0, 75) : links;
+  const formattedLinks = linkSample.map(link => `- ${link.text} (${link.href})`).join('\n');
+  
   const targetTopic = targetPage.replace(/_/g, ' ');
   
   try {
-    // First, try to use AI to evaluate which link is most promising
-    const observation = await page.observe({
-      instruction: `Find the link that is most likely to lead to the topic "${targetTopic}"`,
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        {
+          role: "system",
+          content: `You are an AI assistant helping navigate a Wikipedia race. Your task is to analyze links on the current page and determine which one is most likely to lead closer to the target page "${targetTopic}".
+
+You must return ONLY the exact text of the link you recommend clicking, with no additional content, explanation, or formatting.
+
+Make strategic choices based on:
+1. Direct relevance to the target topic
+2. Broader categories that might contain the target
+3. Related fields or concepts that could lead to the target
+4. Historical, geographical, or thematic connections`
+        },
+        {
+          role: "user",
+          content: `
+I'm currently on the Wikipedia page "${currentPageTitle}".
+My target is to reach the page about "${targetTopic}".
+
+Here are available links on the current page:
+
+${formattedLinks}
+
+Which ONE link should I click that would most likely lead me closer to "${targetTopic}"? Return ONLY the exact text of the best link to click, nothing else.`
+        }
+      ],
+      temperature: 0.2,
+      max_tokens: 50
     });
+
+    const bestLinkText = response.choices[0].message.content?.trim();
+    if (!bestLinkText) {
+      console.log('OpenAI returned empty response, using fallback');
+      return links[0];
+    }
     
-    if (observation.length > 0) {
-      // Find the link that matches the observation
-      const recommendedLink = links.find(link => 
-        observation.some(obs => 
-          link.text.includes(obs.description) || 
-          (obs.selector && obs.selector.includes(link.text))
-        )
+    // Try to find the exact link first
+    let bestLink = links.find(link => link.text === bestLinkText);
+    
+    // If no exact match, try fuzzy matching
+    if (!bestLink) {
+      bestLink = links.find(link => 
+        link.text.includes(bestLinkText) || 
+        bestLinkText.includes(link.text) ||
+        link.text.toLowerCase() === bestLinkText.toLowerCase()
       );
+    }
+    
+    // If still no match, try more aggressive fuzzy matching by tokenizing
+    if (!bestLink) {
+      const bestLinkWords = bestLinkText.toLowerCase().split(/\s+/);
+      const linkScores = links.map(link => {
+        const linkText = link.text.toLowerCase();
+        const score = bestLinkWords.filter(word => linkText.includes(word)).length / bestLinkWords.length;
+        return { link, score };
+      });
       
-      if (recommendedLink) {
-        return recommendedLink;
+      // Sort by score descending
+      linkScores.sort((a, b) => b.score - a.score);
+      
+      // If best match has reasonable score, use it
+      if (linkScores[0].score > 0.5) {
+        bestLink = linkScores[0].link;
+        console.log(`Fuzzy matched "${bestLinkText}" to "${bestLink.text}" with score ${linkScores[0].score}`);
       }
+    }
+    
+    if (bestLink) {
+      return bestLink;
+    } else {
+      // If no match found, use a fallback
+      console.log(`OpenAI suggestion "${bestLinkText}" couldn't be matched to a link, using fallback`);
+      return links[0];
     }
   } catch (error) {
-    console.error('Error using observe for link selection:', error);
+    console.error('Error calling OpenAI:', error);
+    
+    // Fallback - return a random link with preference to important-looking ones
+    const potentialGoodLinks = links.filter(link => 
+      link.text.length > 10 || // Longer links might be more substantial
+      link.text.charAt(0).toUpperCase() === link.text.charAt(0) // Capitalized links might be important topics
+    );
+    
+    const fallbackLinks = potentialGoodLinks.length > 0 ? potentialGoodLinks : links;
+    return fallbackLinks[Math.floor(Math.random() * fallbackLinks.length)];
   }
-  
-  // Fallback: simple heuristic approach
-  // Look for links that might be related to the target topic
-  const targetWords = targetTopic.toLowerCase().split(' ');
-  
-  // Score each link based on word overlap with target
-  const scoredLinks = links.map(link => {
-    const linkText = link.text.toLowerCase();
-    let score = 0;
-    
-    // Check for direct word matches
-    for (const word of targetWords) {
-      if (linkText.includes(word)) {
-        score += 3;
-      }
-    }
-    
-    // Bonus for links to broader categories that might contain the target
-    const broaderCategories = [
-      'science', 'history', 'geography', 'physics', 'mathematics',
-      'biography', 'people', 'person', 'country', 'nation', 'politics',
-      'art', 'music', 'literature', 'philosophy', 'religion'
-    ];
-    
-    for (const category of broaderCategories) {
-      if (linkText.includes(category)) {
-        score += 1;
-      }
-    }
-    
-    return { ...link, score };
-  });
-  
-  // Sort by score and return the highest scoring link
-  scoredLinks.sort((a, b) => b.score - a.score);
-  
-  // Return the highest scoring link, or a random link if no good matches
-  if (scoredLinks.length > 0) {
-    if (scoredLinks[0].score > 0) {
-      return scoredLinks[0];
-    } else {
-      // If no good matches, pick a random link to explore
-      return links[Math.floor(Math.random() * links.length)];
-    }
-  }
-  
-  return null;
 }

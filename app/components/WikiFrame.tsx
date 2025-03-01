@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import './WikiFrame.css';
 
 interface WikiFrameProps {
@@ -102,7 +102,7 @@ export default function WikiFrame({ startPage, targetPage, onNavigation, onTarge
   // Load content when URL changes
   useEffect(() => {
     loadWikipediaContent(currentUrl);
-  }, [currentUrl]);
+  }, [currentUrl, ]);
   
   return (
     <div className="flex flex-col h-full">
@@ -140,16 +140,6 @@ export default function WikiFrame({ startPage, targetPage, onNavigation, onTarge
         <div ref={contentRef} className="wikipedia-content"></div>
       </div>
       
-      {/* Status bar */}
-      <div className="bg-gray-700 p-2 flex justify-between items-center text-xs">
-        <span className="opacity-70">Target: {targetPage.replace(/_/g, ' ')}</span>
-        <button
-          onClick={onTargetReached}
-          className="bg-green-600 hover:bg-green-700 px-3 py-1 rounded font-medium"
-        >
-          I've Reached the Target!
-        </button>
-      </div>
     </div>
   );
 } 

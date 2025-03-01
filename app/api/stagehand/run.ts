@@ -29,7 +29,6 @@ export async function runStagehand(sessionId?: string, gameParams?: WikiRacePara
   await stagehand.init();
   await main({ 
     page: stagehand.page, 
-    context: stagehand.context, 
     stagehand,
     gameParams 
   });
