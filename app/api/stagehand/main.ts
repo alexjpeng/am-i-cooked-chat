@@ -101,11 +101,10 @@ export async function main({
       if (bestLink) {
         console.log(`${chalkGreen('AI decided to click:')} ${bestLink.text}`);
         
-        // 3. Use Stagehand act() to click the chosen link
+        
         await page.act({
           action: `click the link to "${bestLink.text}"`,
         });
-        
         // Wait for page to load
         await page.waitForLoadState('networkidle');
         
@@ -193,6 +192,7 @@ async function getWikipediaLinks(page: Page): Promise<Array<{ text: string; href
         !link.href.includes('Category:') &&
         !link.href.includes('Portal:') &&
         !link.href.includes('Talk:') &&
+        !link.href.includes('Main Page') &&
         link.text.length > 1 && // Skip very short link text
         !link.text.match(/^\[\d+\]$/) // Skip citation links like [1], [2], etc.
       );

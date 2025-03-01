@@ -193,11 +193,6 @@ export default function Home() {
     <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-800 text-white">
       {/* Header */}
       <header className="p-4 flex justify-between items-center">
-        <div className="text-3xl font-extrabold">
-          <span className="bg-clip-text text-transparent bg-gradient-to-r from-yellow-400 via-pink-500 to-purple-500">
-            WikiRace AI
-          </span>
-        </div>
         {gameState.status === 'in-progress' && (
           <div className="bg-black/30 p-2 rounded-lg text-xl">
             <span className="font-mono">Target: {gameState.targetPage.replace(/_/g, ' ')}</span>
@@ -234,9 +229,9 @@ export default function Home() {
         {/* Game not started */}
         {gameState.status === 'not-started' && (
           <div className="max-w-md mx-auto bg-white/10 backdrop-blur-md p-8 rounded-xl shadow-xl">
-            <h1 className="text-4xl font-black mb-6 text-center">Race Against AI</h1>
+            <h1 className="text-4xl font-black mb-6 text-center "><span className="bg-clip-text text-transparent bg-gradient-to-r from-yellow-400 via-pink-500 to-purple-500">am I cooked chat?</span></h1>
             <p className="mb-6 text-lg">
-              Navigate from one Wikipedia page to another using only hyperlinks. The AI will race you and judge your performance!
+              is your world model better than gpt-4o-mini&apos;s? try to beat the AI to the target wikipedia page by clicking on the links. if you can&apos;t, you might be cooked.
             </p>
             
             <div className="space-y-4">
@@ -342,7 +337,7 @@ export default function Home() {
                   Thinking...
                 </span>
               </div>
-              {running && <DebuggerIframe debugUrl={debugUrl} env={config.env} />}
+              {running && <DebuggerIframe debugUrl={debugUrl + '&navbar=false'} env={config.env} />}
             </div>
           </div>
         )}
@@ -431,7 +426,7 @@ export default function Home() {
       
       <footer className="p-4 text-center text-sm opacity-7 z-5">
         <div className="flex flex-col items-center gap-3">
-          <p>Built with <a href="https://stagehand.dev" target="_blank" rel="noopener noreferrer" className="underline">Stagehand</a> & <a href="https://browserbase.com" target="_blank" rel="noopener noreferrer" className="underline">Browserbase</a> | A fun demo of AI-powered web automation</p>
+          <p>Built with  <a href="https://stagehand.dev" target="_blank" rel="noopener noreferrer" className="underline">Stagehand</a> & <a href="https://browserbase.com" target="_blank" rel="noopener noreferrer" className="underline">Browserbase</a></p>
           
           <div className="flex items-center gap-4 mt-1">
             <a 
