@@ -100,12 +100,10 @@ export async function main({
       
       if (bestLink) {
         console.log(`${chalkGreen('AI decided to click:')} ${bestLink.text}`);
-        
-        await page.act({
-          action: `click the link to "${bestLink.text}."`,
-        });
-        // Wait for page to load
-        await page.waitForLoadState('networkidle');
+
+        const result = await page.observe(`find the link for ${bestLink.text}`)
+
+        await page.act(result[0])
         
         // Get the new page title and update path
         const newPageTitle = await page.title();
