@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Create Stagehand App",
-  description: "Default starter kit for Stagehand",
+  title: "am I cooked chat",
+  description: "am I cooked chat",
 };
 
 export default function RootLayout({
