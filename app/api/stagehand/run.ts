@@ -39,6 +39,12 @@ export async function startBBSSession() {
   const browserbase = new Browserbase(StagehandConfig);
   const session = await browserbase.sessions.create({
     projectId: StagehandConfig.projectId!,
+    browserSettings: {
+      viewport: {
+        width: 1024,
+        height: 768,
+      },
+    },
   });
   const debugUrl = await browserbase.sessions.debug(session.id);
   return {

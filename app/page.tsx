@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { getConfig, runStagehand, startBBSSession } from "@/app/api/stagehand/run";
 import { ConstructorParams } from "@browserbasehq/stagehand";
 import DebuggerIframe from "@/components/stagehand/debuggerIframe";
 import WikiFrame from "./components/WikiFrame";
 import WikiAutocomplete from "./components/WikiAutocomplete";
+import AICommentary from './components/AICommentary';
 
 // Define types for our game state
 interface PlayerPath {
@@ -48,6 +49,14 @@ export default function Home() {
     result: null
   });
 
+  // AI commentary state
+  const [aiCommentary, setAiCommentary] = useState('');
+  const [showCommentary, setShowCommentary] = useState(false);
+  const commentaryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // AI state indicators
+  const [aiStatus, setAiStatus] = useState<'idle' | 'thinking' | 'navigating'>('idle');
+
   // Custom start/target inputs
   const [customStart, setCustomStart] = useState('');
   const [customTarget, setCustomTarget] = useState('');
@@ -62,6 +71,8 @@ export default function Home() {
   const [debugUrl, setDebugUrl] = useState<string | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [lastKnownUrl, setLastKnownUrl] = useState<string | null>(null);
 
   
 
@@ -84,23 +95,56 @@ export default function Home() {
 
   const endGame = useCallback((reason = 'completed') => {
     setRunning(false);
+    setLastKnownUrl(null);
     
     if (reason === 'error') return;
     
-    setGameState(prev => ({
-      ...prev,
-      status: 'completed',
-      endTime: new Date(),
-      result: {
-        winner: Math.random() > 0.5 ? 'player' : 'ai', // For demo purposes
-        playerClicks: prev.playerPath.length,
-        aiClicks: prev.aiPath.length,
-        playerTime: prev.startTime ? (new Date().getTime() - prev.startTime.getTime()) / 1000 : 0,
-        aiTime: prev.startTime ? (new Date().getTime() - prev.startTime.getTime() - 2000) / 1000 : 0, // AI is slightly faster for demo
-        commentary: generateCommentary(prev.playerPath.length),
-        rating: prev.playerPath.length < 8 ? 'cracked' : prev.playerPath.length > 12 ? 'cooked' : 'mid'
+    setGameState(prev => {
+      // Determine the winner based on who reached the target first
+      // If the player called endGame, they won. If the AI path contains the target, AI won.
+      const aiReachedTarget = prev.aiPath.some(
+        step => step.title.replace(/ /g, '_') === prev.targetPage || 
+               step.url.includes(`/wiki/${prev.targetPage}`)
+      );
+      
+      const playerReachedTarget = prev.playerPath.some(
+        step => step.title.replace(/ /g, '_') === prev.targetPage
+      );
+      
+      // Determine the winner
+      let winner: 'player' | 'ai' = 'player';
+      
+      if (reason === 'ai-won') {
+        winner = 'ai';
+      } else if (aiReachedTarget && !playerReachedTarget) {
+        winner = 'ai';
+      } else if (playerReachedTarget && !aiReachedTarget) {
+        winner = 'player';
+      } else if (aiReachedTarget && playerReachedTarget) {
+        // Both reached the target, compare path lengths
+        winner = prev.playerPath.length <= prev.aiPath.length ? 'player' : 'ai';
       }
-    }));
+      
+      const playerTime = prev.startTime ? (new Date().getTime() - prev.startTime.getTime()) / 1000 : 0;
+      const aiTime = prev.aiPath.length > 0 
+        ? (prev.aiPath[prev.aiPath.length - 1].timestamp.getTime() - prev.startTime!.getTime()) / 1000 
+        : playerTime;
+      
+      return {
+        ...prev,
+        status: 'completed',
+        endTime: new Date(),
+        result: {
+          winner,
+          playerClicks: prev.playerPath.length,
+          aiClicks: prev.aiPath.length,
+          playerTime,
+          aiTime,
+          commentary: generateCommentary(prev.playerPath.length),
+          rating: prev.playerPath.length < 8 ? 'cracked' : prev.playerPath.length > 12 ? 'cooked' : 'mid'
+        }
+      };
+    });
   }, []);
 
   const startGame = useCallback(async (start = '', target = '') => {
@@ -134,11 +178,13 @@ export default function Home() {
     });
 
     setRunning(true);
+    setAiStatus('thinking');
 
     try {
       if (config.env === "BROWSERBASE") {
         const { sessionId, debugUrl } = await startBBSSession();
         setDebugUrl(debugUrl);
+        setSessionId(sessionId);
         
         // Pass start and target pages to Stagehand
         await runStagehand(sessionId, {
@@ -171,13 +217,212 @@ export default function Home() {
            roasts[Math.floor(Math.random() * roasts.length)];
   };
 
-  const handlePlayerNavigation = (url: string, title: string) => {
-    // Track player navigation
-    setGameState(prev => ({
-      ...prev,
-      playerPath: [...prev.playerPath, { url, title, timestamp: new Date() }]
-    }));
+  // Helper function to extract a readable title from a Wikipedia URL
+  const extractTitleFromUrl = (url: string): string => {
+    try {
+      // Extract the path after /wiki/
+      const pathMatch = url.match(/\/wiki\/([^#?]*)/);
+      if (pathMatch && pathMatch[1]) {
+        // Replace underscores with spaces and decode URI components
+        return decodeURIComponent(pathMatch[1].replace(/_/g, ' '));
+      }
+      return 'Unknown Page';
+    } catch (error) {
+      console.error('Error extracting title from URL:', error);
+      return 'Unknown Page';
+    }
   };
+
+  const handlePlayerNavigation = async (url: string, title: string) => {
+    // Track player navigation
+    setGameState(prev => {
+      // Check if this URL already exists in the path to avoid duplicates
+      const urlExists = prev.playerPath.some(item => item.url === url);
+      if (urlExists) {
+        return prev;
+      }
+      
+      // Add the new navigation to the path
+      const updatedPath = [...prev.playerPath, { url, title, timestamp: new Date() }];
+      
+      // Generate AI commentary if we have at least 2 pages in the path
+      if (updatedPath.length >= 2 && prev.status === 'in-progress') {
+        generateAICommentary(title, prev.targetPage, updatedPath.map(p => p.title));
+      }
+      
+      return {
+        ...prev,
+        playerPath: updatedPath
+      };
+    });
+  };
+
+  // Function to generate AI commentary
+  const generateAICommentary = async (currentPage: string, targetPage: string, pathTitles: string[]) => {
+    try {
+      const response = await fetch('/api/commentary', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          currentPage,
+          targetPage,
+          previousPages: pathTitles,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to generate commentary');
+      }
+
+      const data = await response.json();
+      
+      // Clear any existing timeout
+      if (commentaryTimeoutRef.current) {
+        clearTimeout(commentaryTimeoutRef.current);
+      }
+      
+      // Hide any existing commentary first
+      setShowCommentary(false);
+      
+      // Short delay before showing new commentary
+      setTimeout(() => {
+        setAiCommentary(data.commentary);
+        setShowCommentary(true);
+        
+        // Auto-hide commentary after 8 seconds
+        commentaryTimeoutRef.current = setTimeout(() => {
+          setShowCommentary(false);
+        }, 8000);
+      }, 300);
+      
+    } catch (error) {
+      console.error('Error generating AI commentary:', error);
+    }
+  };
+
+  // Clean up timeouts on unmount
+  useEffect(() => {
+    return () => {
+      if (commentaryTimeoutRef.current) {
+        clearTimeout(commentaryTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Track AI navigation in real-time
+  useEffect(() => {
+    if (gameState.status === 'in-progress' && running && sessionId) {
+      // Set initial AI status
+      setAiStatus('thinking');
+      
+      // Function to fetch session data from our API endpoint
+      const fetchSessionData = async () => {
+        try {
+          const response = await fetch(`/api/browserbase?sessionId=${sessionId}`);
+          
+          if (!response.ok) {
+            console.error('Failed to fetch session data:', response.statusText);
+            return;
+          }
+          
+          const data = await response.json();
+          
+          // Get the current page from the pages array (usually the last one)
+          if (data.pages && data.pages.length > 0) {
+            const currentPage = data.pages[data.pages.length - 1];
+            
+            // Check if this is a new URL we haven't seen before
+            if (currentPage.url !== lastKnownUrl) {
+              // Update the last known URL
+              setLastKnownUrl(currentPage.url);
+              
+              // Only add to path if it's a Wikipedia page
+              if (currentPage.url.includes('wikipedia.org/wiki/')) {
+                // Extract the page title from the URL or title
+                let pageTitle = currentPage.title.replace(' - Wikipedia', '');
+                
+                // If the title is empty or not available, extract it from the URL
+                if (!pageTitle || pageTitle === '') {
+                  pageTitle = extractTitleFromUrl(currentPage.url);
+                }
+                
+                // Toggle AI status to navigating
+                setAiStatus('navigating');
+                
+                // Add the page to the AI path
+                setGameState(prev => {
+                  // Check if we already have this URL in the path to avoid duplicates
+                  const urlExists = prev.aiPath.some(item => item.url === currentPage.url);
+                  
+                  if (!urlExists) {
+                    const newPath = [
+                      ...prev.aiPath,
+                      {
+                        url: currentPage.url,
+                        title: pageTitle,
+                        timestamp: new Date()
+                      }
+                    ];
+                    
+                    // Check if the AI has reached the target
+                    const normalizedTargetPage = prev.targetPage;
+                    const currentPagePath = currentPage.url.split('/wiki/')[1];
+                    
+                    // Check if the current page matches the target (either by exact match or by title)
+                    const isTargetReached = 
+                      currentPagePath === normalizedTargetPage || 
+                      pageTitle.replace(/ /g, '_') === normalizedTargetPage ||
+                      currentPagePath && normalizedTargetPage && 
+                      currentPagePath.toLowerCase() === normalizedTargetPage.toLowerCase();
+                    
+                    if (isTargetReached) {
+                      // Check if player already won
+                      const playerReachedTarget = prev.playerPath.some(
+                        step => step.title.replace(/ /g, '_') === normalizedTargetPage
+                      );
+                      
+                      if (!playerReachedTarget) {
+                        // End the game with AI as winner after a brief delay
+                        setTimeout(() => endGame('ai-won'), 1000);
+                      }
+                    }
+                    
+                    return {
+                      ...prev,
+                      aiPath: newPath
+                    };
+                  }
+                  
+                  return prev;
+                });
+                
+                // Set status back to thinking after a short delay
+                setTimeout(() => {
+                  setAiStatus('thinking');
+                }, 1500);
+              }
+            }
+          }
+        } catch (error) {
+          console.error('Error fetching session data:', error);
+        }
+      };
+      
+      // Poll for session data every 2 seconds
+      const pollInterval = setInterval(fetchSessionData, 2000);
+      
+      // Initial fetch
+      fetchSessionData();
+      
+      // Cleanup
+      return () => {
+        clearInterval(pollInterval);
+        setAiStatus('idle');
+      };
+    }
+  }, [gameState.status, running, sessionId, lastKnownUrl, endGame]);
 
   useEffect(() => {
     fetchConfig();
@@ -310,7 +555,7 @@ export default function Home() {
 
         {/* Game in progress */}
         {gameState.status === 'in-progress' && (
-          <div className="flex flex-col lg:flex-row gap-4 h-[80vh]">
+          <div className="flex flex-col lg:flex-row gap-4 h-[60vh]">
             {/* Player's Wikipedia frame */}
             <div className="flex-1 bg-white rounded-xl overflow-hidden shadow-xl flex flex-col">
               <div className="bg-gray-800 p-2 text-sm font-medium flex justify-between items-center">
@@ -333,14 +578,137 @@ export default function Home() {
             <div className="flex-1 bg-black rounded-xl overflow-hidden shadow-xl flex flex-col">
               <div className="bg-gray-800 p-2 text-sm font-medium flex justify-between items-center">
                 <span>AI Opponent</span>
-                <span className="bg-pink-600 px-2 py-1 rounded text-xs">
-                  Thinking...
+                <span className={`px-2 py-1 rounded text-xs flex items-center ${
+                  aiStatus === 'thinking' ? 'bg-yellow-600' : 
+                  aiStatus === 'navigating' ? 'bg-pink-600' : 'bg-gray-600'
+                }`}>
+                  {aiStatus === 'thinking' && (
+                    <>
+                      <span className="mr-1">Thinking</span>
+                      <span className="flex space-x-1">
+                        <span className="w-1 h-1 bg-white rounded-full animate-pulse" style={{ animationDelay: '0ms' }}></span>
+                        <span className="w-1 h-1 bg-white rounded-full animate-pulse" style={{ animationDelay: '200ms' }}></span>
+                        <span className="w-1 h-1 bg-white rounded-full animate-pulse" style={{ animationDelay: '400ms' }}></span>
+                      </span>
+                    </>
+                  )}
+                  {aiStatus === 'navigating' && (
+                    <>
+                      <span className="mr-1">Navigating</span>
+                      <svg className="animate-spin h-3 w-3 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                    </>
+                  )}
+                  {aiStatus === 'idle' && 'Not Started'}
                 </span>
               </div>
               {running && <DebuggerIframe debugUrl={debugUrl + '&navbar=false'} env={config.env} />}
             </div>
           </div>
         )}
+
+        {/* Path History Displays */}
+        {gameState.status === 'in-progress' && (
+          <div className="flex flex-col lg:flex-row gap-4 mt-4">
+            {/* Player's Path History */}
+            <div className="flex-1 bg-white/10 backdrop-blur-md rounded-xl p-4 shadow-xl">
+              <h3 className="text-lg font-bold mb-2">Your Path</h3>
+              {gameState.playerPath.length === 0 ? (
+                <div className="text-white/60 italic">Start your journey by clicking links in the Wikipedia page</div>
+              ) : (
+                <div className="flex flex-col space-y-2">
+                  {gameState.playerPath.map((step, index) => {
+                    const isLatest = index === gameState.playerPath.length - 1;
+                    const isTarget = step.title.replace(/ /g, '_') === gameState.targetPage;
+                    
+                    return (
+                      <div 
+                        key={index} 
+                        className={`flex items-center p-2 rounded-lg transition-all ${
+                          isLatest ? 'bg-purple-900/50 shadow-lg' : ''
+                        } ${isTarget ? 'bg-green-700/50 border border-green-400' : ''}`}
+                      >
+                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold mr-2 ${
+                          isTarget ? 'bg-green-500' : 'bg-purple-600'
+                        }`}>
+                          {index + 1}
+                        </div>
+                        <div className={`font-medium ${isLatest ? 'text-white' : 'text-white/90'}`}>
+                          {step.title}
+                          {isTarget && <span className="ml-2 text-green-300 text-xs font-bold">TARGET REACHED!</span>}
+                        </div>
+                        <div className="ml-auto text-xs text-white/50">
+                          {step.timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'})}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            
+            {/* AI's Path History */}
+            <div className="flex-1 bg-black/30 backdrop-blur-md rounded-xl p-4 shadow-xl">
+              <h3 className="text-lg font-bold mb-2">AI Path</h3>
+              {gameState.aiPath.length === 0 ? (
+                <div className="text-white/60 italic">
+                  {sessionId ? (
+                    <div className="flex items-center">
+                      <span>Connecting to AI agent</span>
+                      <span className="flex space-x-1 ml-2">
+                        <span className="w-1 h-1 bg-white rounded-full animate-pulse" style={{ animationDelay: '0ms' }}></span>
+                        <span className="w-1 h-1 bg-white rounded-full animate-pulse" style={{ animationDelay: '200ms' }}></span>
+                        <span className="w-1 h-1 bg-white rounded-full animate-pulse" style={{ animationDelay: '400ms' }}></span>
+                      </span>
+                    </div>
+                  ) : (
+                    'AI is thinking...'
+                  )}
+                </div>
+              ) : (
+                <div className="flex flex-col space-y-2">
+                  {gameState.aiPath.map((step, index) => {
+                    const isLatest = index === gameState.aiPath.length - 1;
+                    const isTarget = step.title.replace(/ /g, '_') === gameState.targetPage;
+                    
+                    return (
+                      <div 
+                        key={index} 
+                        className={`flex items-center p-2 rounded-lg transition-all ${
+                          isLatest ? 'bg-pink-900/50 shadow-lg' : ''
+                        } ${isTarget ? 'bg-green-700/50 border border-green-400' : ''}`}
+                      >
+                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold mr-2 ${
+                          isTarget ? 'bg-green-500' : 'bg-pink-600'
+                        }`}>
+                          {index + 1}
+                        </div>
+                        <div className={`font-medium ${isLatest ? 'text-white' : 'text-white/90'}`}>
+                          {step.title}
+                          {isTarget && <span className="ml-2 text-green-300 text-xs font-bold">TARGET REACHED!</span>}
+                        </div>
+                        <div className="ml-auto text-xs text-white/50">
+                          {step.timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'})}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* AI Commentary */}
+        <AICommentary 
+          message={aiCommentary} 
+          isVisible={showCommentary} 
+          onFinishTyping={() => {
+            // Optional: Do something when typing animation finishes
+          }}
+        />
 
         {/* Game completed */}
         {gameState.status === 'completed' && gameState.result && (

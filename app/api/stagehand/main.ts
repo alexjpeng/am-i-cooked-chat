@@ -101,9 +101,8 @@ export async function main({
       if (bestLink) {
         console.log(`${chalkGreen('AI decided to click:')} ${bestLink.text}`);
         
-        
         await page.act({
-          action: `click the link to "${bestLink.text}"`,
+          action: `click the link to "${bestLink.text}."`,
         });
         // Wait for page to load
         await page.waitForLoadState('networkidle');
