@@ -106,23 +106,6 @@ export default function WikiFrame({ startPage, targetPage, onNavigation, onTarge
   
   return (
     <div className="flex flex-col h-full">
-      {/* Navigation bar */}
-      <div className="bg-gray-700 p-2 flex items-center space-x-2">
-        <input 
-          type="text" 
-          value={currentUrl}
-          onChange={(e) => setCurrentUrl(e.target.value)}
-          className="wikipedia-nav-input flex-1"
-          placeholder="Enter Wikipedia URL..."
-        />
-        <button 
-          onClick={() => loadWikipediaContent(currentUrl)}
-          className="bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded text-xs font-medium"
-        >
-          Go
-        </button>
-      </div>
-      
       {/* Content area */}
       <div className="flex-1 overflow-auto bg-white">
         {loading && (
