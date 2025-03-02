@@ -21,9 +21,9 @@ Their target page is "${targetPage}". Their path so far has been: ${previousPage
 Generate a short, snarky, playful comment (max 100 characters) teasing the player about their navigation choice. 
 Use all lowercase, include emojis, and make it sound like casual internet speech.
 Examples:
-- "can't believe you missed einstein => united states 🤣 you are so cooked"
-- "going through history? target is literally in the science section lol 💀"
-- "taking the scenic route i see 😂 i'll be done before you even get close"`;
+- "can't believe you missed X => obvious Y 🤣 you are so cooked"
+- "personally would've gone X => Y but if you want to take the long way around i won't stop you 🤣"
+- "literally calculating 20 steps ahead and you're still at X lmao"`;
 
     // Generate commentary
     const response = await openai.chat.completions.create({
