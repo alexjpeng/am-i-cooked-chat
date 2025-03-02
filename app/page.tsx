@@ -49,6 +49,9 @@ export default function Home() {
     result: null
   });
 
+  // Loading state for end-game commentary
+  const [isCommentaryLoading, setIsCommentaryLoading] = useState(false);
+
   // AI commentary state
   const [aiCommentary, setAiCommentary] = useState('');
   const [showCommentary, setShowCommentary] = useState(false);
@@ -93,7 +96,7 @@ export default function Home() {
     setWarning(warningToShow.join("\n"));
   }, []);
 
-  const endGame = useCallback((reason = 'completed') => {
+  const endGame = useCallback(async (reason = 'completed') => {
     setRunning(false);
     setLastKnownUrl(null);
     
@@ -130,22 +133,112 @@ export default function Home() {
         ? (prev.aiPath[prev.aiPath.length - 1].timestamp.getTime() - prev.startTime!.getTime()) / 1000 
         : playerTime;
       
+      // Create a temporary result with placeholder commentary
+      const tempResult: GameResult = {
+        winner,
+        playerClicks: prev.playerPath.length,
+        aiClicks: prev.aiPath.length,
+        playerTime,
+        aiTime,
+        commentary: "generating commentary...",
+        rating: 'mid' // Will be updated with AI response
+      };
+      
+      // Generate AI commentary asynchronously
+      generateEndGameCommentary(
+        winner,
+        prev.playerPath.length,
+        prev.aiPath.length,
+        playerTime,
+        aiTime,
+        prev.playerPath.map(p => p.title),
+        prev.aiPath.map(p => p.title),
+        prev.targetPage
+      );
+      
       return {
         ...prev,
         status: 'completed',
         endTime: new Date(),
-        result: {
-          winner,
-          playerClicks: prev.playerPath.length,
-          aiClicks: prev.aiPath.length,
-          playerTime,
-          aiTime,
-          commentary: generateCommentary(prev.playerPath.length),
-          rating: prev.playerPath.length < 8 ? 'cracked' : prev.playerPath.length > 12 ? 'cooked' : 'mid'
-        }
+        result: tempResult
       };
     });
   }, []);
+
+  // Function to generate end-game commentary
+  const generateEndGameCommentary = async (
+    winner: 'player' | 'ai',
+    playerClicks: number,
+    aiClicks: number,
+    playerTime: number,
+    aiTime: number,
+    playerPath: string[],
+    aiPath: string[],
+    targetPage: string
+  ) => {
+    setIsCommentaryLoading(true);
+    
+    try {
+      const response = await fetch('/api/endgame-commentary', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          winner,
+          playerClicks,
+          aiClicks,
+          playerTime,
+          aiTime,
+          playerPath,
+          aiPath,
+          targetPage
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to generate end-game commentary');
+      }
+
+      const data = await response.json();
+      
+      // Update the game result with AI-generated commentary
+      setGameState(prev => {
+        if (prev.result) {
+          return {
+            ...prev,
+            result: {
+              ...prev.result,
+              commentary: data.commentary,
+              rating: data.rating
+            }
+          };
+        }
+        return prev;
+      });
+      
+    } catch (error) {
+      console.error('Error generating end-game commentary:', error);
+      // Use fallback commentary if API call fails
+      setGameState(prev => {
+        if (prev.result) {
+          return {
+            ...prev,
+            result: {
+              ...prev.result,
+              commentary: winner === 'player' 
+                ? "you beat the ai! not bad for a human 👏" 
+                : "better luck next time 😂 ai wins again",
+              rating: winner === 'player' ? 'cracked' : 'cooked'
+            }
+          };
+        }
+        return prev;
+      });
+    } finally {
+      setIsCommentaryLoading(false);
+    }
+  };
 
   const startGame = useCallback(async (start = '', target = '') => {
     if (!config) return;
@@ -202,20 +295,6 @@ export default function Home() {
       endGame('error');
     }
   }, [config, endGame]);
-
-  const generateCommentary = (clicks: number): string => {
-    const roasts = [
-      "you got cooked by gpt-4o-mini in 3 clicks. ngmi",
-      "maybe you didn't get enough pretraining in the womb. cooked.",
-    ];
-    
-    const praise = [
-      "absolutely cracked. you might be safe from agi (for now)",
-    ];
-    
-    return clicks < 8 ? praise[Math.floor(Math.random() * praise.length)] : 
-           roasts[Math.floor(Math.random() * roasts.length)];
-  };
 
   // Helper function to extract a readable title from a Wikipedia URL
   const extractTitleFromUrl = (url: string): string => {
@@ -737,7 +816,20 @@ export default function Home() {
                 {gameState.result.rating === 'cracked' ? '✨ YOU&apos;RE CRACKED' : 
                  gameState.result.rating === 'cooked' ? '💀 YOU GOT COOKED' : '😐 MID PERFORMANCE'}
               </div>
-              <div className="text-xl italic">{gameState.result.commentary}</div>
+              <div className="text-xl italic">
+                {isCommentaryLoading ? (
+                  <div className="flex items-center space-x-2">
+                    <span>AI is judging your performance</span>
+                    <span className="flex space-x-1">
+                      <span className="w-1 h-1 bg-white rounded-full animate-pulse" style={{ animationDelay: '0ms' }}></span>
+                      <span className="w-1 h-1 bg-white rounded-full animate-pulse" style={{ animationDelay: '200ms' }}></span>
+                      <span className="w-1 h-1 bg-white rounded-full animate-pulse" style={{ animationDelay: '400ms' }}></span>
+                    </span>
+                  </div>
+                ) : (
+                  gameState.result.commentary
+                )}
+              </div>
             </div>
             
             {/* Stagehand CTAs */}
