@@ -15,6 +15,7 @@ export default function WikiFrame({ startPage, targetPage, onNavigation, onTarge
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const isInitialLoad = useRef(true);
   
   // Load Wikipedia content through our proxy
   const loadWikipediaContent = async (url: string) => {
@@ -50,7 +51,12 @@ export default function WikiFrame({ startPage, targetPage, onNavigation, onTarge
           modifyLinks(contentRef.current);
           
           // Notify parent component about navigation
-          onNavigation(url, data.title);
+          if (!isInitialLoad.current || !url.includes(`/wiki/${startPage}`)) {
+            onNavigation(url, data.title);
+          }
+          
+          // Reset the initial load flag
+          isInitialLoad.current = false;
           
           // Check if we've reached the target
           if (
@@ -102,7 +108,14 @@ export default function WikiFrame({ startPage, targetPage, onNavigation, onTarge
   // Load content when URL changes
   useEffect(() => {
     loadWikipediaContent(currentUrl);
-  }, [currentUrl, ]);
+  }, [currentUrl]);
+  
+  // Initialize with the start page
+  useEffect(() => {
+    // Reset the URL and the initial load flag when the start page changes
+    isInitialLoad.current = true;
+    setCurrentUrl(`https://en.wikipedia.org/wiki/${startPage}`);
+  }, [startPage]);
   
   return (
     <div className="flex flex-col h-full">
